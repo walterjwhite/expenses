@@ -1,0 +1,97 @@
+#!/bin/sh
+
+. _LIBRARY_PATH/_APPLICATION_NAME/include.sh
+. _LIBRARY_PATH/git-helpers/project.directory.sh
+
+_append() {
+    if [ -n "$_MATCH" ]
+    then
+        _MATCH="$_MATCH && \$$1$2"
+    else
+        _MATCH="\$$1$2"
+    fi
+}
+
+_AGGREGATION=sum
+
+_NAME=total
+_FIELD=10
+
+_EXPENSES=$_EXPENSES_FILE
+
+for _ARG in $@
+do
+    case $_ARG in
+      tax)
+        _NAME=tax
+        _FIELD=8
+        shift
+        ;;
+      tip)
+        _NAME=tip
+        _FIELD=9
+        shift
+        ;;
+      -a)
+        _EXPENSES=$_PROJECT_PATH
+
+        shift
+        ;;
+    esac
+done
+
+_GROUP_BUCKET="sum += \$$_FIELD; n++"
+_GROUP_PRINT="print $_AGGREGATION"
+
+for _ARG in $@
+do
+    case $_ARG in
+        # category filter
+        -c=*)
+            _append 3 "==\"${_ARG#*=}\""
+            ;;
+        # group by 
+        -g=*)
+            case "${_ARG#*=}" in
+                category)
+                    _GROUP_BUCKET="bucket = \$3;A[bucket] = A[bucket] + \$$_FIELD;"
+                    
+                    ;;
+                description)
+                    _GROUP_BUCKET="bucket = \$2;A[bucket] = A[bucket] + \$$_FIELD;"
+                    
+                    ;;
+                name)
+                    _GROUP_BUCKET="bucket = \$1;A[bucket] = A[bucket] + \$$_FIELD;"
+                    
+                    ;;
+                year)
+                    _GROUP_BUCKET="bucket = substr(\$5, 1, 4);A[bucket] = A[bucket] + \$$_FIELD;"
+                    ;;
+                month)
+                    _GROUP_BUCKET="bucket = substr(\$5, 1, 7);A[bucket] = A[bucket] + \$$_FIELD;"
+                    ;;
+                day)
+                    _GROUP_BUCKET="bucket = substr(\$5, 1, 7);A[bucket] = A[bucket] + \$$_FIELD;"
+                    ;;
+            esac
+
+            _GROUP_PRINT="for (i in A) {print i, A[i];}"
+            _GROUP=1
+            ;;
+    esac
+done
+
+_FILTER=$(mktemp)
+echo "$_MATCH {$_GROUP_BUCKET} END {$_GROUP_PRINT}" > $_FILTER
+
+echo "find $_EXPENSES -type f | grep \\.expenses$"
+echo "$_NAME ($_MATCH) ($_GROUP_BUCKET) ($_GROUP_PRINT):"
+echo ""
+
+awk -F',' -f $_FILTER\
+    $(find $_EXPENSES -type f | grep \\.expenses$)\
+    | sort\
+    | sed -e "s/^$/0.00/"
+
+rm -f $_FILTER
